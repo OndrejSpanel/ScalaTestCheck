@@ -3,7 +3,7 @@ import org.scalatest.matchers.should.Matchers
 import org.scalacheck._
 import org.scalacheck.effect.PropF
 import org.scalatest.exceptions.TestFailedException
-import org.scalatestplus.scalacheck.ScalaCheckPropertyChecks
+import org.scalatestplus.scalacheck.{CheckerAsserting, Checkers, ScalaCheckPropertyChecks}
 
 import scala.concurrent.Future
 
@@ -18,25 +18,28 @@ class MainTest extends AsyncFlatSpec with Matchers with ScalaCheckPropertyChecks
 
   it should "perform async computations" in {
 
-    val f: Future[Test.Result] = PropF.forAllF(Gen.oneOf(0 until 10)) { i  =>
+    PropF.forAllF(Gen.oneOf(0 until 10)) { i  =>
       Future {
         assert(i < 5) // intentional fail - we want to see how the failure is reported
       }.map(_ => ()) // forAllF supports Future[Unit] by default, so we need to throw away the Assertion value
-    }.check()
-
-    f.map { result =>
-      result.status match {
+    }.check().map { result =>
+      val propResult = result.status match {
+        case _: Test.Proved =>
+          Prop.Result(Prop.Proof)
         case Test.Exhausted =>
-          throw new Exception("Test exhausted")
-
+          Prop.Result(Prop.Undecided)
         case Test.Failed(scalaCheckArgs, scalaCheckLabels) =>
-          throw new Exception("Test failed")
-
+          Prop.Result(status = Prop.False, args = scalaCheckArgs, labels = scalaCheckLabels)
         case Test.PropException(scalaCheckArgs, e, scalaCheckLabels) =>
-          throw e // new Exception("Test thrown an exception")
+          Prop.Result(status = Prop.Exception(e), args = scalaCheckArgs, labels = scalaCheckLabels)
+        case _ if result.passed =>
+          Prop.Result(Prop.True)
         case _ =>
-          assert(result.passed)
+          Prop.Result(Prop.False)
       }
+
+      Checkers.check(Prop(_ => propResult))
     }
+
   }
 }
